@@ -191,16 +191,16 @@ func dealUdpCliData(flow *FlowInfo, addr string) error {
 	return err
 }
 
-func ReplayCliPcap(flows *Flows, addr string) error {
+func ReplayCliPcap(flows *Flows, tcpAddr, udpAddr string) error {
 	err := errors.New("no flow info")
 	nums := len(flows.flow)
 	var cnt Stats
 	for index, flow := range flows.flow {
 		index++
 		if flow.proto == "TCP" {
-			err = dealTcpCliData(flow, addr)
+			err = dealTcpCliData(flow, tcpAddr)
 		} else if flow.proto == "UDP" {
-			err = dealUdpCliData(flow, addr)
+			err = dealUdpCliData(flow, udpAddr)
 		} else {
 			err = errors.New(fmt.Sprintf("Not Support Proto[%s]\n", flow.proto))
 		}
