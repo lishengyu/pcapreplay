@@ -53,7 +53,7 @@ const (
 	RawSocketBuff = 2048
 	FlowDuration  = 5 * time.Second
 	PktDuration   = 100 * time.Millisecond
-	ReadDeadline  = 3 * time.Second
+	ReadDeadline  = 20 * time.Second
 	WriteDeadline = 1 * time.Second
 	//ReadDeadline = time.Now().Add(3 * time.Second)
 )
@@ -151,9 +151,11 @@ func printFlowsInfo(flows *Flows) {
 	for index, flow := range flows.flow {
 		log.Printf("流信息:\n")
 		log.Printf("流[%d]：%s, 协议：%s, 负载包数量：%d\n", index, flow.tuple, flow.proto, flow.num)
+		var index int
 		for e := flow.list.Front(); e != nil; e = e.Next() {
 			value := e.Value.(Stack)
-			log.Printf("负载和上下行关系：[%s][%d]:[%s]\n", value.md5, value.len, FlowDirDesc[value.dir])
+			index++
+			log.Printf("负载和上下行关系：[%d][%s][%d]:[%s]\n", index, value.md5, value.len, FlowDirDesc[value.dir])
 		}
 	}
 }

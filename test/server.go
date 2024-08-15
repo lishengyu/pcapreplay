@@ -18,8 +18,8 @@ var (
 func main() {
 	flag.StringVar(&PcapFile, "f", "", "需要加载的数据报文")
 	flag.StringVar(&Ip, "i", "", "ip")
-	flag.StringVar(&TcpPort, "p", "8888", "tcp port")
-	flag.StringVar(&UdpPort, "u", "9999", "udp port")
+	flag.StringVar(&TcpPort, "p", "", "tcp port")
+	flag.StringVar(&UdpPort, "u", "", "udp port")
 	flag.Parse()
 
 	if PcapFile == "" {
@@ -27,32 +27,49 @@ func main() {
 		return
 	}
 
-	tcpaddr := fmt.Sprintf("%s:%s", Ip, TcpPort)
-	udpaddr := fmt.Sprintf("%s:%s", Ip, UdpPort)
+	if TcpPort != "" {
+		tcpaddr := fmt.Sprintf("%s:%s", Ip, TcpPort)
+		log.Printf("Listen tcp: %v\n", tcpaddr)
 
-	tcpConn, err := pcapreplay.NewPcapSrvTcpConn(tcpaddr)
-	if err != nil {
-		return
-	}
-	log.Printf("Listen tcp: %v\n", tcpConn)
+		tcpConn, err := pcapreplay.NewPcapSrvTcpConn(tcpaddr)
+		if err != nil {
+			log.Printf("Failed: %v\n", err)
+			return
+		}
 
-	udpConn, udpAddr, err := pcapreplay.NewPcapSrvUdpConn(udpaddr)
-	if err != nil {
-		return
-	}
-	log.Printf("Listen udp: %v\n", udpConn)
+		flows, err := pcapreplay.LoadPcapPayloadFile(PcapFile)
+		if err != nil {
+			log.Printf("Failed: Load Pcap File: %v\n", err)
+			return
+		}
+		log.Printf("Load Pcap[%s] Complete! Flows Num[%d]\n", PcapFile, pcapreplay.GetFlowNum(flows))
 
-	flows, err := pcapreplay.LoadPcapPayloadFile(PcapFile)
-	if err != nil {
-		log.Printf("Load Pcap File Failed: %v\n", err)
-		return
-	}
-	log.Printf("Load Pcap[%s] Complete! Flows Num[%d]\n", PcapFile, pcapreplay.GetFlowNum(flows))
+		err = pcapreplay.ReplaySrvPcap(flows, tcpConn, nil, nil)
+		if err != nil {
+			log.Printf("Failed: Replay Pcap File: %v\n", err)
+			return
+		}
+	} else if UdpPort != "" {
+		udpaddr := fmt.Sprintf("%s:%s", Ip, UdpPort)
+		log.Printf("Listen udp: %v\n", udpaddr)
+		udpConn, udpAddr, err := pcapreplay.NewPcapSrvUdpConn(udpaddr)
+		if err != nil {
+			log.Printf("Failed: %v\n", err)
+			return
+		}
 
-	err = pcapreplay.ReplaySrvPcap(flows, tcpConn, udpConn, udpAddr)
-	if err != nil {
-		log.Printf("Replay Pcap File Failed: %v\n", err)
-		return
+		flows, err := pcapreplay.LoadPcapPayloadFile(PcapFile)
+		if err != nil {
+			log.Printf("Failed: Load Pcap File: %v\n", err)
+			return
+		}
+		log.Printf("Load Pcap[%s] Complete! Flows Num[%d]\n", PcapFile, pcapreplay.GetFlowNum(flows))
+
+		err = pcapreplay.ReplaySrvPcap(flows, nil, udpConn, udpAddr)
+		if err != nil {
+			log.Printf("Failed: Replay Pcap File: %v\n", err)
+			return
+		}
 	}
 
 	return

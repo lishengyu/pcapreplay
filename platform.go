@@ -10,6 +10,10 @@ import (
 )
 
 func dealTcpSrvData(conn net.Conn, l *list.List) error {
+	if conn == nil {
+		return nil
+	}
+
 	var err error
 	buffer := make([]byte, 0)
 
@@ -95,6 +99,10 @@ func dealTcpSrvData(conn net.Conn, l *list.List) error {
 }
 
 func dealUdpSrvData(conn *net.UDPConn, l *list.List, udpAddr *net.UDPAddr) error {
+	if conn == nil {
+		return nil
+	}
+
 	var err error
 	for {
 		if l.Len() == 0 {
