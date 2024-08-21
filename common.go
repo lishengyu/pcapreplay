@@ -29,13 +29,14 @@ type FlowInfo struct {
 	proto string
 	dp    string
 	list  *list.List
-	num   int
 }
 
 type Flows struct {
-	flow  []*FlowInfo
-	num   int
-	exist map[string]int
+	flow      []*FlowInfo
+	num       int
+	assembPay []byte
+	assembDir int
+	exist     map[string]int
 }
 
 type Stats struct {
@@ -54,7 +55,6 @@ const (
 	FlowDuration  = 5 * time.Second
 	PktDuration   = 100 * time.Millisecond
 	ReadDeadline  = 20 * time.Second
-	WriteDeadline = 1 * time.Second
 	//ReadDeadline = time.Now().Add(3 * time.Second)
 )
 
@@ -92,6 +92,44 @@ func NicList() error {
 	return nil
 }
 
+func newFlow(key, proto, dp string) *FlowInfo {
+	flow := &FlowInfo{
+		tuple: key,
+		proto: proto,
+		dp:    dp,
+		list:  list.New(),
+	}
+	return flow
+}
+
+func newStack(payload []byte, dir int) Stack {
+	md5 := getPayloadMd5(string(payload))
+	pay := Stack{
+		payload: payload,
+		len:     len(payload),
+		md5:     md5,
+		dir:     dir,
+	}
+	return pay
+}
+
+func appendFlows(flows *Flows, flow *FlowInfo, key string) {
+	flows.flow = append(flows.flow, flow)
+	flows.exist[key] = flows.num
+	flows.num++
+}
+
+// 重置重组信息
+func setAssembInfo(flows *Flows, dir int, payload []byte) {
+	flows.assembDir = dir
+	flows.assembPay = payload
+}
+
+// 更新重组信息
+func upAssembInfo(flows *Flows, payload []byte) {
+	flows.assembPay = append(flows.assembPay, payload...)
+}
+
 func getFlowKey(proto, sip, dip, sp, dp string) string {
 	src := fmt.Sprintf("%s-%s", sip, sp)
 	dst := fmt.Sprintf("%s-%s", dip, dp)
@@ -124,17 +162,6 @@ func getPayloadMd5(payload string) string {
 	return fmt.Sprintf("%x", m.Sum(nil))
 }
 
-func genPayloadInfo(payload []byte, dir int) Stack {
-	md5 := getPayloadMd5(string(payload))
-	pay := Stack{
-		payload: payload,
-		len:     len(payload),
-		md5:     md5,
-		dir:     dir,
-	}
-	return pay
-}
-
 func NewFlows() *Flows {
 	flows := &Flows{
 		exist: make(map[string]int),
@@ -150,7 +177,7 @@ func GetFlowNum(flows *Flows) int {
 func printFlowsInfo(flows *Flows) {
 	for index, flow := range flows.flow {
 		log.Printf("流信息:\n")
-		log.Printf("流[%d]：%s, 协议：%s, 负载包数量：%d\n", index, flow.tuple, flow.proto, flow.num)
+		log.Printf("流[%d]：%s, 协议：%s, 负载包数量：%d\n", index, flow.tuple, flow.proto, flow.list.Len())
 		var index int
 		for e := flow.list.Front(); e != nil; e = e.Next() {
 			value := e.Value.(Stack)
@@ -211,11 +238,9 @@ func updateFlowPayload(flows *Flows, packet gopacket.Packet) {
 	payload := getPayloadInfo(packet)
 
 	if L3 == nil || L4 == nil {
-		//log.Printf("packet L3 or L4 is nil! [%v]\n", packet)
 		return
 	}
 	if len(payload) == 0 {
-		//log.Printf("payload is nil! [%v]\n", packet)
 		return
 	}
 
@@ -229,23 +254,26 @@ func updateFlowPayload(flows *Flows, packet gopacket.Packet) {
 	index, ok := flows.exist[key]
 	if ok {
 		flow := flows.flow[index]
-		pi := genPayloadInfo(payload, getFlowDir(flow, dp))
-		flow.list.PushBack(pi)
-		flow.num++
-	} else {
-		flow := &FlowInfo{
-			tuple: key,
-			proto: proto,
-			dp:    dp,
-			num:   1,
-			list:  list.New(),
+		curDir := getFlowDir(flow, dp)
+		if flows.assembDir != curDir { //上下行切换，入队列
+			setAssembInfo(flows, curDir, payload)
+			pi := newStack(payload, curDir)
+			flow.list.PushBack(pi)
+		} else {
+			//同方向，先出队列，进行payload重组，更新后再入队列
+			flow.list.Remove(flow.list.Back())
+			upAssembInfo(flows, payload)
+			pi := newStack(flows.assembPay, curDir)
+			flow.list.PushBack(pi)
 		}
-		pi := genPayloadInfo(payload, FlowDirUp)
+	} else {
+		flow := newFlow(key, proto, dp)
+		pi := newStack(payload, FlowDirUp)
 		flow.list.PushBack(pi)
 
-		flows.flow = append(flows.flow, flow)
-		flows.exist[key] = flows.num
-		flows.num++
+		//记录临时重组信息
+		setAssembInfo(flows, FlowDirUp, payload)
+		appendFlows(flows, flow, key)
 	}
 }
 

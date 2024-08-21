@@ -80,11 +80,6 @@ func dealTcpSrvData(conn net.Conn, l *list.List) error {
 				break
 			}
 
-			err = conn.SetWriteDeadline(time.Now().Add(WriteDeadline))
-			if err != nil {
-				return err
-			}
-
 			_, err = conn.Write(pay.payload)
 			if err != nil {
 				return err
@@ -151,11 +146,6 @@ func dealUdpSrvData(conn *net.UDPConn, l *list.List, udpAddr *net.UDPAddr) error
 			pay := front.Value.(Stack)
 			if len(pay.payload) == 0 || pay.dir == FlowDirUp {
 				break
-			}
-
-			err = conn.SetWriteDeadline(time.Now().Add(WriteDeadline))
-			if err != nil {
-				return err
 			}
 
 			_, err = conn.WriteToUDP(pay.payload, addr)

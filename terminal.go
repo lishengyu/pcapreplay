@@ -36,18 +36,14 @@ func dealTcpCliData(flow *FlowInfo, addr string) error {
 			continue
 		}
 
-		err = conn.SetWriteDeadline(time.Now().Add(WriteDeadline))
-		if err != nil {
-			return err
-		}
-
 		_, err = conn.Write(pay.payload)
 		if err != nil {
 			return err
 		}
-		log.Printf("Send: [%s]\n", pay.md5)
+		log.Printf("Send: [%d][%s]\n", pay.len, pay.md5)
 		l.Remove(front)
 
+		buffer := make([]byte, 0)
 		for {
 			if l.Len() == 0 {
 				return nil
@@ -73,11 +69,19 @@ func dealTcpCliData(flow *FlowInfo, addr string) error {
 			if err != nil {
 				return err
 			}
-			md5 := getPayloadMd5(string(data[:n]))
-			if md5 != pay.md5 {
-				log.Printf("md5 recv mismatch, recv[%s], expect[%s]\n", md5, pay.md5)
-				log.Printf("length[%d][%v]\n", n, data[:n])
+
+			var md5 string
+			buffer = append(buffer, data[:n]...)
+			if len(buffer) < pay.len {
 				continue
+			} else {
+				md5 = getPayloadMd5(string(buffer[:pay.len]))
+				if md5 != pay.md5 {
+					log.Printf("md5 recv mismatch, recv[%s], expect[%s]\n", md5, pay.md5)
+					log.Printf("length [%d][%v]\n", len(buffer), buffer)
+					buffer = buffer[:0]
+					continue
+				}
 			}
 			log.Printf("Recv: [%s]\n", md5)
 			l.Remove(front)
@@ -86,7 +90,7 @@ func dealTcpCliData(flow *FlowInfo, addr string) error {
 		time.Sleep(PktDuration)
 	}
 
-	return err
+	return nil
 }
 
 func dealUdpCliData(flow *FlowInfo, addr string) error {
@@ -120,11 +124,6 @@ func dealUdpCliData(flow *FlowInfo, addr string) error {
 		if len(pay.payload) == 0 || pay.dir == FlowDirDn {
 			l.Remove(front)
 			continue
-		}
-
-		err = conn.SetWriteDeadline(time.Now().Add(WriteDeadline))
-		if err != nil {
-			return err
 		}
 
 		_, err = conn.Write(pay.payload)
