@@ -31,7 +31,11 @@ func dealTcpCliData(flow *FlowInfo, addr string) error {
 		}
 
 		pay := front.Value.(Stack)
-		if len(pay.payload) == 0 || pay.dir == FlowDirDn {
+		if pay.fake == true {
+			return nil
+		}
+
+		if pay.dir == FlowDirDn {
 			l.Remove(front)
 			continue
 		}
@@ -40,7 +44,7 @@ func dealTcpCliData(flow *FlowInfo, addr string) error {
 		if err != nil {
 			return err
 		}
-		log.Printf("Send: [%d][%s]\n", pay.len, pay.md5)
+		log.Printf("[remain: %d]Send: [%d]\n", l.Len(), pay.len)
 		l.Remove(front)
 
 		buffer := make([]byte, 0)
@@ -55,8 +59,13 @@ func dealTcpCliData(flow *FlowInfo, addr string) error {
 			}
 
 			pay := front.Value.(Stack)
-			if len(pay.payload) == 0 || pay.dir == FlowDirUp {
+			if pay.dir == FlowDirUp && pay.expectlen == 0 {
 				break
+			}
+
+			if pay.dir == FlowDirDn {
+				l.Remove(front)
+				continue
 			}
 
 			err = conn.SetReadDeadline(time.Now().Add(ReadDeadline))
@@ -70,21 +79,15 @@ func dealTcpCliData(flow *FlowInfo, addr string) error {
 				return err
 			}
 
-			var md5 string
 			buffer = append(buffer, data[:n]...)
-			if len(buffer) < pay.len {
-				continue
+			if len(buffer) >= pay.expectlen {
+				log.Printf("[remain: %d][recv: %d ==> assembe: %d ==> expect: %d]\n", l.Len(), n, len(buffer), pay.expectlen)
+				buffer = buffer[:0]
+				break
 			} else {
-				md5 = getPayloadMd5(string(buffer[:pay.len]))
-				if md5 != pay.md5 {
-					log.Printf("md5 recv mismatch, recv[%s], expect[%s]\n", md5, pay.md5)
-					log.Printf("length [%d][%v]\n", len(buffer), buffer)
-					buffer = buffer[:0]
-					continue
-				}
+				log.Printf("continue reading... [recv: %d ==> assembe: %d ==> expect: %d]\n", n, len(buffer), pay.expectlen)
+				continue
 			}
-			log.Printf("Recv: [%s]\n", md5)
-			l.Remove(front)
 		}
 
 		time.Sleep(PktDuration)
@@ -130,10 +133,9 @@ func dealUdpCliData(flow *FlowInfo, addr string) error {
 		if err != nil {
 			return err
 		}
-		log.Printf("Send: [%s]\n", pay.md5)
+		log.Printf("Send: [%d]\n", pay.len)
 		l.Remove(front)
 
-		buffer := make([]byte, 0)
 		for {
 			if l.Len() == 0 {
 				return nil
@@ -161,26 +163,12 @@ func dealUdpCliData(flow *FlowInfo, addr string) error {
 				return err
 			}
 
-			buffer = append(buffer, data[:n]...)
-			if len(buffer) < pay.len {
-				log.Printf("length recv less, recv[%d], expect[%d], continue...\n", len(buffer), pay.len)
-				buffer = append(buffer, data[:n]...)
+			if n != pay.len {
+				log.Printf("length recv[%d], expect[%d], continue...\n", n, pay.len)
 				continue
-			} else if len(buffer) > pay.len {
-				log.Printf("length recv mismatch, recv[%d], expect[%d]\n", len(buffer), pay.len)
-				buffer = buffer[:0]
-				continue
-			} else { //len(buffer) == pay.len
-				md5 := getPayloadMd5(string(buffer))
-				if md5 != pay.md5 {
-					log.Printf("md5 recv mismatch, recv[%d][%s], expect[%d][%s]\n", n, md5, pay.len, pay.md5)
-					buffer = buffer[:0]
-					continue
-				} else {
-					buffer = buffer[:0]
-					log.Printf("Recv: [%s]\n", md5)
-					l.Remove(front)
-				}
+			} else {
+				log.Printf("Recv: [%d]\n", pay.len)
+				l.Remove(front)
 			}
 		}
 

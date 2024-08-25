@@ -18,25 +18,26 @@ import (
 )
 
 type Stack struct {
-	payload []byte
-	len     int
-	md5     string
-	dir     int
+	payload   []byte
+	len       int
+	dir       int
+	expectlen int
+	fake      bool
 }
 
 type FlowInfo struct {
-	tuple string
-	proto string
-	dp    string
-	list  *list.List
+	tuple     string
+	proto     string
+	dp        string
+	assembLen int
+	assembDir int
+	list      *list.List
 }
 
 type Flows struct {
-	flow      []*FlowInfo
-	num       int
-	assembPay []byte
-	assembDir int
-	exist     map[string]int
+	flow  []*FlowInfo
+	num   int
+	exist map[string]int
 }
 
 type Stats struct {
@@ -94,23 +95,43 @@ func NicList() error {
 
 func newFlow(key, proto, dp string) *FlowInfo {
 	flow := &FlowInfo{
-		tuple: key,
-		proto: proto,
-		dp:    dp,
-		list:  list.New(),
+		tuple:     key,
+		proto:     proto,
+		dp:        dp,
+		assembLen: 0,
+		assembDir: FlowDirUp,
+		list:      list.New(),
 	}
 	return flow
 }
 
-func newStack(payload []byte, dir int) Stack {
-	md5 := getPayloadMd5(string(payload))
+func newStack(payload []byte, dir int, expect int) Stack {
 	pay := Stack{
-		payload: payload,
-		len:     len(payload),
-		md5:     md5,
-		dir:     dir,
+		payload:   payload,
+		len:       len(payload),
+		dir:       dir,
+		expectlen: expect,
 	}
 	return pay
+}
+
+func newTailStack(len int) Stack {
+	pay := Stack{
+		expectlen: len,
+		fake:      true,
+	}
+	return pay
+}
+
+func updateTailStack(st *Stack, len int) {
+	st.expectlen = len
+}
+
+func updateStack(st *Stack, payload []byte, dir int, expect int) {
+	st.payload = payload
+	st.len = len(payload)
+	st.dir = dir
+	st.expectlen = expect
 }
 
 func appendFlows(flows *Flows, flow *FlowInfo, key string) {
@@ -120,14 +141,14 @@ func appendFlows(flows *Flows, flow *FlowInfo, key string) {
 }
 
 // 重置重组信息
-func setAssembInfo(flows *Flows, dir int, payload []byte) {
-	flows.assembDir = dir
-	flows.assembPay = payload
+func setAssembInfo(flow *FlowInfo, dir, len int) {
+	flow.assembDir = dir
+	flow.assembLen = len
 }
 
 // 更新重组信息
-func upAssembInfo(flows *Flows, payload []byte) {
-	flows.assembPay = append(flows.assembPay, payload...)
+func upAssembInfo(flow *FlowInfo, len int) {
+	flow.assembLen += len
 }
 
 func getFlowKey(proto, sip, dip, sp, dp string) string {
@@ -182,7 +203,7 @@ func printFlowsInfo(flows *Flows) {
 		for e := flow.list.Front(); e != nil; e = e.Next() {
 			value := e.Value.(Stack)
 			index++
-			log.Printf("负载和上下行关系：[%d][%s][%d]:[%s]\n", index, value.md5, value.len, FlowDirDesc[value.dir])
+			log.Printf("负载和上下行关系：[%d][%d|%d]:[%s]\n", index, value.len, value.expectlen, FlowDirDesc[value.dir])
 		}
 	}
 }
@@ -255,24 +276,47 @@ func updateFlowPayload(flows *Flows, packet gopacket.Packet) {
 	if ok {
 		flow := flows.flow[index]
 		curDir := getFlowDir(flow, dp)
-		if flows.assembDir != curDir { //上下行切换，入队列
-			setAssembInfo(flows, curDir, payload)
-			pi := newStack(payload, curDir)
-			flow.list.PushBack(pi)
-		} else {
-			//同方向，先出队列，进行payload重组，更新后再入队列
+		if flow.assembDir != curDir { //上下行切换，入队列
+			//伪节点出队
 			flow.list.Remove(flow.list.Back())
-			upAssembInfo(flows, payload)
-			pi := newStack(flows.assembPay, curDir)
+
+			//只有状态切换的情况下，才需要保存预期的接收字节长度
+			//但是最后一个方向的状态，没有切换无法保存，需要追加一个节点
+			pi := newStack(payload, curDir, flow.assembLen)
 			flow.list.PushBack(pi)
+
+			//更新重组信息
+			setAssembInfo(flow, curDir, len(payload))
+
+			//伪节点入队
+			tail := newTailStack(flow.assembLen)
+			flow.list.PushBack(tail)
+		} else {
+			//伪节点出队
+			flow.list.Remove(flow.list.Back())
+			//同方向，直接入队
+			pi := newStack(payload, curDir, 0)
+			flow.list.PushBack(pi)
+
+			//更新重组信息
+			upAssembInfo(flow, len(payload))
+
+			//伪节点入队
+			tail := newTailStack(flow.assembLen)
+			flow.list.PushBack(tail)
 		}
 	} else {
 		flow := newFlow(key, proto, dp)
-		pi := newStack(payload, FlowDirUp)
+		pi := newStack(payload, FlowDirUp, 0)
 		flow.list.PushBack(pi)
 
 		//记录临时重组信息
-		setAssembInfo(flows, FlowDirUp, payload)
+		setAssembInfo(flow, FlowDirUp, len(payload))
+		//添加最后的伪节点
+		tail := newTailStack(flow.assembLen)
+		flow.list.PushBack(tail)
+
+		//追加流
 		appendFlows(flows, flow, key)
 	}
 }

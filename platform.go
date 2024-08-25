@@ -27,7 +27,11 @@ func dealTcpSrvData(conn net.Conn, l *list.List) error {
 			return nil
 		}
 		pay := front.Value.(Stack)
-		if pay.len == 0 || pay.dir == FlowDirDn {
+		if pay.fake == true {
+			return nil
+		}
+
+		if pay.dir == FlowDirUp {
 			l.Remove(front)
 			continue
 		}
@@ -44,25 +48,12 @@ func dealTcpSrvData(conn net.Conn, l *list.List) error {
 		}
 
 		buffer = append(buffer, data[:n]...)
-		log.Printf("%d ==> %d | %d\n", n, len(buffer), pay.len)
-		if len(buffer) < pay.len {
-			log.Printf("length recv less, recv[%d], expect[%d], continue...\n", len(buffer), pay.len)
-			continue
-		} else if len(buffer) > pay.len {
-			log.Printf("length recv oversize, recv[%d], expect[%d], dropped!!\n", len(buffer), pay.len)
+		if len(buffer) >= pay.expectlen {
+			log.Printf("[remain: %d] [recv: %d ==> assembe: %d ==> expect: %d]\n", l.Len(), n, len(buffer), pay.expectlen)
 			buffer = buffer[:0]
+		} else {
+			log.Printf("continue reading... [recv: %d ==> assembe: %d ==> expect: %d]\n", n, len(buffer), pay.expectlen)
 			continue
-		} else { //len(buffer) == pay.len
-			md5 := getPayloadMd5(string(buffer))
-			if md5 != pay.md5 {
-				log.Printf("md5 recv mismatch, recv[%d][%s], expect[%d][%s]\n", n, md5, pay.len, pay.md5)
-				buffer = buffer[:0]
-				continue
-			} else {
-				buffer = buffer[:0]
-				log.Printf("Recv: [%s]\n", md5)
-				l.Remove(front)
-			}
 		}
 
 		for {
@@ -76,7 +67,7 @@ func dealTcpSrvData(conn net.Conn, l *list.List) error {
 			}
 
 			pay := front.Value.(Stack)
-			if pay.len == 0 || pay.dir == FlowDirUp {
+			if pay.dir != FlowDirDn {
 				break
 			}
 
@@ -84,7 +75,7 @@ func dealTcpSrvData(conn net.Conn, l *list.List) error {
 			if err != nil {
 				return err
 			}
-			log.Printf("Send: [%s]\n", pay.md5)
+			log.Printf("[reamin: %d] Send: [%d]\n", l.Len(), pay.len)
 			l.Remove(front)
 			time.Sleep(PktDuration)
 		}
@@ -125,12 +116,11 @@ func dealUdpSrvData(conn *net.UDPConn, l *list.List, udpAddr *net.UDPAddr) error
 			log.Printf("read udp[%v] data failed: %v", addr, err)
 			return err
 		}
-		md5 := getPayloadMd5(string(data[:n]))
-		if md5 != pay.md5 {
-			log.Printf("md5 recv mismatch, recv[%s], expect[%s]\n", md5, pay.md5)
+		if n != pay.len {
+			log.Printf("length recv mismatch, recv[%d], expect[%d]\n", n, pay.len)
 			continue
 		}
-		log.Printf("Recv: [%s]\n", md5)
+		log.Printf("Recv: [%d]\n", n)
 		l.Remove(front)
 
 		for {
@@ -152,7 +142,7 @@ func dealUdpSrvData(conn *net.UDPConn, l *list.List, udpAddr *net.UDPAddr) error
 			if err != nil {
 				return err
 			}
-			log.Printf("Send: [%s]\n", pay.md5)
+			log.Printf("Send: [%d]\n", pay.len)
 			l.Remove(front)
 			time.Sleep(PktDuration)
 		}
