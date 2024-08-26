@@ -31,7 +31,8 @@ func dealTcpCliData(flow *FlowInfo, addr string) error {
 		}
 
 		pay := front.Value.(Stack)
-		if pay.fake == true {
+		//伪节点，需要接收，不需要发送数据
+		if pay.fake {
 			return nil
 		}
 
@@ -44,10 +45,10 @@ func dealTcpCliData(flow *FlowInfo, addr string) error {
 		if err != nil {
 			return err
 		}
-		log.Printf("[remain: %d]Send: [%d]\n", l.Len(), pay.len)
+		log.Printf("[%s:%03d] Send: [%d]\n", FlowDirDesc[pay.dir], pay.pktSeq, pay.len)
 		l.Remove(front)
 
-		buffer := make([]byte, 0)
+		var bufferLen int
 		for {
 			if l.Len() == 0 {
 				return nil
@@ -59,13 +60,14 @@ func dealTcpCliData(flow *FlowInfo, addr string) error {
 			}
 
 			pay := front.Value.(Stack)
-			if pay.dir == FlowDirUp && pay.expectlen == 0 {
-				break
-			}
-
 			if pay.dir == FlowDirDn {
 				l.Remove(front)
 				continue
+			}
+
+			//非状态切换后的首个payload报文，只需要负责发送
+			if pay.expectlen == 0 {
+				break
 			}
 
 			err = conn.SetReadDeadline(time.Now().Add(ReadDeadline))
@@ -79,21 +81,19 @@ func dealTcpCliData(flow *FlowInfo, addr string) error {
 				return err
 			}
 
-			buffer = append(buffer, data[:n]...)
-			if len(buffer) >= pay.expectlen {
-				log.Printf("[remain: %d][recv: %d ==> assembe: %d ==> expect: %d]\n", l.Len(), n, len(buffer), pay.expectlen)
-				buffer = buffer[:0]
+			bufferLen += n
+			if bufferLen >= pay.expectlen {
+				log.Printf("[recv: %d ==> assembe: %d ==> expect: %d]\n", n, bufferLen, pay.expectlen)
+				bufferLen = 0
 				break
 			} else {
-				log.Printf("continue reading... [recv: %d ==> assembe: %d ==> expect: %d]\n", n, len(buffer), pay.expectlen)
+				log.Printf("continue reading... [recv: %d ==> assembe: %d ==> expect: %d]\n", n, bufferLen, pay.expectlen)
 				continue
 			}
 		}
 
 		time.Sleep(PktDuration)
 	}
-
-	return nil
 }
 
 func dealUdpCliData(flow *FlowInfo, addr string) error {

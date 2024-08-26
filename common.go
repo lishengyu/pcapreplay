@@ -22,6 +22,7 @@ type Stack struct {
 	len       int
 	dir       int
 	expectlen int
+	pktSeq    int
 	fake      bool
 }
 
@@ -31,6 +32,7 @@ type FlowInfo struct {
 	dp        string
 	assembLen int
 	assembDir int
+	pktDirSeq [FlowDirMax]int
 	list      *list.List
 }
 
@@ -49,6 +51,7 @@ const (
 	FlowDirNone = iota
 	FlowDirUp
 	FlowDirDn
+	FlowDirMax
 )
 
 const (
@@ -62,8 +65,8 @@ const (
 var (
 	FlowDirDesc = map[int]string{
 		FlowDirNone: "unknown",
-		FlowDirUp:   "up",
-		FlowDirDn:   "down",
+		FlowDirUp:   "上行",
+		FlowDirDn:   "下行",
 	}
 )
 
@@ -105,22 +108,33 @@ func newFlow(key, proto, dp string) *FlowInfo {
 	return flow
 }
 
-func newStack(payload []byte, dir int, expect int) Stack {
+func newStack(payload []byte, dir int, expect int, seq [FlowDirMax]int) Stack {
 	pay := Stack{
 		payload:   payload,
 		len:       len(payload),
 		dir:       dir,
 		expectlen: expect,
+		pktSeq:    seq[dir],
 	}
 	return pay
 }
 
-func newTailStack(len int) Stack {
-	pay := Stack{
-		expectlen: len,
-		fake:      true,
+func newTailStack(len int, dir int) Stack {
+	if dir == FlowDirUp {
+		pay := Stack{
+			expectlen: len,
+			dir:       FlowDirDn,
+			fake:      true,
+		}
+		return pay
+	} else {
+		pay := Stack{
+			expectlen: len,
+			dir:       FlowDirUp,
+			fake:      true,
+		}
+		return pay
 	}
-	return pay
 }
 
 func updateTailStack(st *Stack, len int) {
@@ -149,6 +163,10 @@ func setAssembInfo(flow *FlowInfo, dir, len int) {
 // 更新重组信息
 func upAssembInfo(flow *FlowInfo, len int) {
 	flow.assembLen += len
+}
+
+func updatePktCount(flow *FlowInfo, dir int) {
+	flow.pktDirSeq[dir] += 1
 }
 
 func getFlowKey(proto, sip, dip, sp, dp string) string {
@@ -203,7 +221,8 @@ func printFlowsInfo(flows *Flows) {
 		for e := flow.list.Front(); e != nil; e = e.Next() {
 			value := e.Value.(Stack)
 			index++
-			log.Printf("负载和上下行关系：[%d][%d|%d]:[%s]\n", index, value.len, value.expectlen, FlowDirDesc[value.dir])
+			log.Printf("第%03d个包：[%s-%03d/%03d]：[发送长度:%d-接收长度:%d]\n",
+				index, FlowDirDesc[value.dir], value.pktSeq, flow.pktDirSeq[value.dir], value.len, value.expectlen)
 		}
 	}
 }
@@ -280,40 +299,50 @@ func updateFlowPayload(flows *Flows, packet gopacket.Packet) {
 			//伪节点出队
 			flow.list.Remove(flow.list.Back())
 
+			//更细报文统计信息
+			updatePktCount(flow, curDir)
+
 			//只有状态切换的情况下，才需要保存预期的接收字节长度
 			//但是最后一个方向的状态，没有切换无法保存，需要追加一个节点
-			pi := newStack(payload, curDir, flow.assembLen)
+			pi := newStack(payload, curDir, flow.assembLen, flow.pktDirSeq)
 			flow.list.PushBack(pi)
 
 			//更新重组信息
 			setAssembInfo(flow, curDir, len(payload))
 
 			//伪节点入队
-			tail := newTailStack(flow.assembLen)
+			tail := newTailStack(flow.assembLen, curDir)
 			flow.list.PushBack(tail)
 		} else {
 			//伪节点出队
 			flow.list.Remove(flow.list.Back())
-			//同方向，直接入队
-			pi := newStack(payload, curDir, 0)
+
+			//更细报文统计信息
+			updatePktCount(flow, curDir)
+
+			pi := newStack(payload, curDir, 0, flow.pktDirSeq)
 			flow.list.PushBack(pi)
 
 			//更新重组信息
 			upAssembInfo(flow, len(payload))
 
 			//伪节点入队
-			tail := newTailStack(flow.assembLen)
+			tail := newTailStack(flow.assembLen, curDir)
 			flow.list.PushBack(tail)
 		}
 	} else {
 		flow := newFlow(key, proto, dp)
-		pi := newStack(payload, FlowDirUp, 0)
+
+		//更细报文统计信息
+		updatePktCount(flow, FlowDirUp)
+		pi := newStack(payload, FlowDirUp, 0, flow.pktDirSeq)
 		flow.list.PushBack(pi)
 
 		//记录临时重组信息
 		setAssembInfo(flow, FlowDirUp, len(payload))
+
 		//添加最后的伪节点
-		tail := newTailStack(flow.assembLen)
+		tail := newTailStack(flow.assembLen, FlowDirUp)
 		flow.list.PushBack(tail)
 
 		//追加流

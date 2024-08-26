@@ -15,7 +15,7 @@ func dealTcpSrvData(conn net.Conn, l *list.List) error {
 	}
 
 	var err error
-	buffer := make([]byte, 0)
+	var bufferLen int
 
 	for {
 		if l.Len() == 0 {
@@ -27,10 +27,6 @@ func dealTcpSrvData(conn net.Conn, l *list.List) error {
 			return nil
 		}
 		pay := front.Value.(Stack)
-		if pay.fake == true {
-			return nil
-		}
-
 		if pay.dir == FlowDirUp {
 			l.Remove(front)
 			continue
@@ -47,13 +43,18 @@ func dealTcpSrvData(conn net.Conn, l *list.List) error {
 			return err
 		}
 
-		buffer = append(buffer, data[:n]...)
-		if len(buffer) >= pay.expectlen {
-			log.Printf("[remain: %d] [recv: %d ==> assembe: %d ==> expect: %d]\n", l.Len(), n, len(buffer), pay.expectlen)
-			buffer = buffer[:0]
+		bufferLen += n
+		if bufferLen >= pay.expectlen {
+			log.Printf("[recv: %d ==> assembe: %d ==> expect: %d]\n", n, bufferLen, pay.expectlen)
+			bufferLen = 0
 		} else {
-			log.Printf("continue reading... [recv: %d ==> assembe: %d ==> expect: %d]\n", n, len(buffer), pay.expectlen)
+			log.Printf("continue reading... [recv: %d ==> assembe: %d ==> expect: %d]\n", n, bufferLen, pay.expectlen)
 			continue
+		}
+
+		//读完结束
+		if pay.fake {
+			return nil
 		}
 
 		for {
@@ -67,21 +68,20 @@ func dealTcpSrvData(conn net.Conn, l *list.List) error {
 			}
 
 			pay := front.Value.(Stack)
-			if pay.dir != FlowDirDn {
+			if pay.dir == FlowDirUp {
 				break
 			}
 
+			//此处肯定是下行数据
 			_, err = conn.Write(pay.payload)
 			if err != nil {
 				return err
 			}
-			log.Printf("[reamin: %d] Send: [%d]\n", l.Len(), pay.len)
+			log.Printf("[%s:%03d] Send: [%d]\n", FlowDirDesc[pay.dir], pay.pktSeq, pay.len)
 			l.Remove(front)
 			time.Sleep(PktDuration)
 		}
 	}
-
-	return err
 }
 
 func dealUdpSrvData(conn *net.UDPConn, l *list.List, udpAddr *net.UDPAddr) error {
