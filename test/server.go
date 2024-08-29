@@ -36,6 +36,7 @@ func main() {
 			log.Printf("Failed: %v\n", err)
 			return
 		}
+		defer tcpConn.Close()
 
 		flows, err := pcapreplay.LoadPcapPayloadFile(PcapFile)
 		if err != nil {
@@ -57,6 +58,7 @@ func main() {
 			log.Printf("Failed: %v\n", err)
 			return
 		}
+		defer udpConn.Close()
 
 		flows, err := pcapreplay.LoadPcapPayloadFile(PcapFile)
 		if err != nil {

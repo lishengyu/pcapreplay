@@ -152,9 +152,8 @@ func dealUdpSrvData(conn *net.UDPConn, l *list.List, udpAddr *net.UDPAddr) error
 }
 
 func ReplaySrvPcap(flows *Flows, tcpConn net.Conn, udpConn *net.UDPConn, udpAddr *net.UDPAddr) error {
-	err := errors.New("no flow info")
 	nums := len(flows.flow)
-	var cnt Stats
+	var err error
 	for index, flow := range flows.flow {
 		index++
 		if flow.proto == "TCP" {
@@ -166,17 +165,15 @@ func ReplaySrvPcap(flows *Flows, tcpConn net.Conn, udpConn *net.UDPConn, udpAddr
 		}
 
 		if err == nil {
-			cnt.cntSucc++
 			log.Printf("Replay[%d/%d] Flow[%s] Succ!\n", index, nums, flow.tuple)
 		} else {
-			cnt.cntFail++
-			log.Printf("Replay[%d/%d] Flow[%s] Fail! %v\n", index, nums, flow.tuple, err)
+			log.Printf("Replay[%d/%d] Flow[%s] Failed: %v\n", index, nums, flow.tuple, err)
+			return err
 		}
 
 		time.Sleep(FlowDuration)
 	}
 
-	log.Printf("Sum:%d, succ:%d, fail:%d\n", nums, cnt.cntSucc, cnt.cntFail)
 	return nil
 }
 
