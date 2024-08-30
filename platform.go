@@ -171,7 +171,7 @@ func ReplaySrvPcap(flows *Flows, tcpConn net.Conn, udpConn *net.UDPConn, udpAddr
 			return err
 		}
 
-		time.Sleep(FlowDuration)
+		//time.Sleep(FlowDuration)
 	}
 
 	return nil
