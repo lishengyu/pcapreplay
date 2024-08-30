@@ -200,7 +200,7 @@ func ReplayCliPcap(flows *Flows, tcpAddr, udpAddr string) error {
 			log.Printf("Replay[%d/%d] Flow[%s] Fail! %v\n", index, nums, flow.tuple, err)
 		}
 
-		time.Sleep(FlowDuration)
+		//time.Sleep(FlowDuration)
 	}
 
 	log.Printf("Sum:%d, succ:%d, fail:%d\n", nums, cnt.cntSucc, cnt.cntFail)
