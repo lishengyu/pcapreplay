@@ -7,13 +7,13 @@ import (
 	"net"
 
 	"github.com/lishengyu/pcapreplay"
+	"go.uber.org/zap"
 )
 
 var (
 	Ip      string
 	UdpPort int
 	TcpPort int
-	Uuid    string
 )
 
 func getPcapName(uuid string) string {
@@ -24,13 +24,19 @@ func main() {
 	flag.StringVar(&Ip, "i", "127.0.0.1", "ip")
 	flag.IntVar(&TcpPort, "p", 0, "tcp port")
 	flag.IntVar(&UdpPort, "u", 0, "udp port")
-	flag.StringVar(&Uuid, "uuid", "test", "uuid")
 	flag.Parse()
 
 	if TcpPort == 0 && UdpPort == 0 {
 		flag.Usage()
 		return
 	}
+
+	// 创建一个新的日志记录器
+	zlog, err := zap.NewProduction()
+	if err != nil {
+		panic(err)
+	}
+	defer zlog.Sync() // 确保缓冲的日志写入
 
 	if TcpPort != 0 {
 		tcpaddr := fmt.Sprintf("%s:%d", Ip, TcpPort)
@@ -49,7 +55,7 @@ func main() {
 				continue
 			}
 
-			go pcapreplay.ReplaySrvTcpPcap(conn, getPcapName)
+			go pcapreplay.ReplaySrvTcpPcap(zlog, conn, getPcapName)
 		}
 	} else if UdpPort != 0 {
 		udpaddr := fmt.Sprintf("%s:%d", Ip, UdpPort)
@@ -67,7 +73,7 @@ func main() {
 			return
 		}
 		defer conn.Close()
-		pcapreplay.ReplaySrvUdpPcap(conn, addr, getPcapName)
+		pcapreplay.ReplaySrvUdpPcap(zlog, conn, addr, getPcapName)
 	}
 
 	return

@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"github.com/lishengyu/pcapreplay"
+	"go.uber.org/zap"
 )
 
 var (
@@ -28,10 +29,17 @@ func main() {
 		return
 	}
 
+	// 创建一个新的日志记录器
+	zlog, err := zap.NewProduction()
+	if err != nil {
+		panic(err)
+	}
+	defer zlog.Sync() // 确保缓冲的日志写入
+
 	tcpaddr := fmt.Sprintf("%s:%d", Ip, TcpPort)
 	udpaddr := fmt.Sprintf("%s:%d", Ip, UdpPort)
 
-	flow, err := pcapreplay.LoadPcapPayloadFile(PcapFile, fmt.Sprintf("uuid:%s\r\n", PcapFile))
+	flow, err := pcapreplay.LoadPcapPayloadFile(zlog, PcapFile, fmt.Sprintf("uuid:%s\r\n", PcapFile))
 	if err != nil {
 		log.Printf("Load Pcap File Failed: %v\n", err)
 		return

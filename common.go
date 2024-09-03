@@ -14,6 +14,7 @@ import (
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
+	"go.uber.org/zap"
 )
 
 type Stack struct {
@@ -221,16 +222,16 @@ func GetFlowNum(flows *Flows) int {
 	return flows.num
 }
 
-func printFlowsInfo(flows *Flows) {
+func printFlowsInfo(zlog *zap.Logger, flows *Flows) {
 	for index, flow := range flows.flow {
-		log.Printf("流信息:\n")
-		log.Printf("流[%d]：%s, 协议：%s, 负载包数量：%d\n", index, flow.tuple, flow.proto, flow.list.Len())
+		zlog.Info(fmt.Sprintf("流信息:\n"))
+		zlog.Info(fmt.Sprintf("流[%d]：%s, 协议：%s, 负载包数量：%d\n", index, flow.tuple, flow.proto, flow.list.Len()))
 		var index int
 		for e := flow.list.Front(); e != nil; e = e.Next() {
 			value := e.Value.(Stack)
 			index++
-			log.Printf("第%03d个包：[%s-%03d/%03d]：[发送长度:%d-接收长度:%d]\n",
-				index, FlowDirDesc[value.dir], value.pktSeq, flow.pktDirSeq[value.dir], value.len, value.expectlen)
+			zlog.Info(fmt.Sprintf("第%03d个包：[%s-%03d/%03d]：[发送长度:%d-接收长度:%d]\n",
+				index, FlowDirDesc[value.dir], value.pktSeq, flow.pktDirSeq[value.dir], value.len, value.expectlen))
 		}
 	}
 }
@@ -341,7 +342,7 @@ func updateFlowPayload(flows *Flows, packet gopacket.Packet, firstPay []byte) {
 	}
 }
 
-func LoadPcapPayloadFile(path string, uuid string) (*FlowInfo, error) {
+func LoadPcapPayloadFile(zlog *zap.Logger, path string, uuid string) (*FlowInfo, error) {
 	if exist := pathExists(path); !exist {
 		return nil, fmt.Errorf(fmt.Sprintf("File [%s] Not exist!\n", path))
 	}
@@ -359,12 +360,12 @@ func LoadPcapPayloadFile(path string, uuid string) (*FlowInfo, error) {
 	}
 
 	AddFlowTailNode(flows)
-	printFlowsInfo(flows)
+	printFlowsInfo(zlog, flows)
 
 	if len(flows.flow) == 0 {
 		return nil, fmt.Errorf("新建流条目数为0")
 	}
 
-	log.Printf("只取第一条流进行回放\n")
+	zlog.Info(fmt.Sprintf("只取第一条流进行回放\n"))
 	return flows.flow[0], nil
 }
