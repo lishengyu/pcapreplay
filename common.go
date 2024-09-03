@@ -222,16 +222,15 @@ func GetFlowNum(flows *Flows) int {
 	return flows.num
 }
 
-func printFlowsInfo(zlog *zap.Logger, flows *Flows) {
-	for index, flow := range flows.flow {
-		zlog.Info(fmt.Sprintf("流信息:\n"))
-		zlog.Info(fmt.Sprintf("流[%d]：%s, 协议：%s, 负载包数量：%d\n", index, flow.tuple, flow.proto, flow.list.Len()))
+func printFlowsInfo(zlog *zap.Logger, path string, flows *Flows) {
+	for _, flow := range flows.flow {
+		zlog.Info("加载报文", zap.String("pcap", path), zap.String("tuple", flow.tuple), zap.String("proto", flow.proto), zap.Int("pkts", flow.list.Len()))
 		var index int
 		for e := flow.list.Front(); e != nil; e = e.Next() {
 			value := e.Value.(Stack)
 			index++
-			zlog.Info(fmt.Sprintf("第%03d个包：[%s-%03d/%03d]：[发送长度:%d-接收长度:%d]\n",
-				index, FlowDirDesc[value.dir], value.pktSeq, flow.pktDirSeq[value.dir], value.len, value.expectlen))
+			zlog.Info("加载报文", zap.String("pcap", path), zap.Int("索引", index), zap.String("方向", FlowDirDesc[value.dir]), zap.Int("序号", value.pktSeq),
+				zap.Int("总数", flow.pktDirSeq[value.dir]), zap.Int("发送长度", value.len), zap.Int("接收长度", value.expectlen))
 		}
 	}
 }
@@ -360,12 +359,12 @@ func LoadPcapPayloadFile(zlog *zap.Logger, path string, uuid string) (*FlowInfo,
 	}
 
 	AddFlowTailNode(flows)
-	printFlowsInfo(zlog, flows)
+	printFlowsInfo(zlog, path, flows)
 
 	if len(flows.flow) == 0 {
 		return nil, fmt.Errorf("新建流条目数为0")
 	}
 
-	zlog.Info(fmt.Sprintf("只取第一条流进行回放\n"))
+	zlog.Info("只取第一条流进行回放")
 	return flows.flow[0], nil
 }

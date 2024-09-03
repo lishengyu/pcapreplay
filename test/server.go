@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
 	"net"
 
 	"github.com/lishengyu/pcapreplay"
@@ -40,18 +39,18 @@ func main() {
 
 	if TcpPort != 0 {
 		tcpaddr := fmt.Sprintf("%s:%d", Ip, TcpPort)
-		log.Printf("Listen tcp: %v\n", tcpaddr)
+		zlog.Info("Listen tcp", zap.String("addr", tcpaddr))
 
 		listen, err := net.Listen("tcp", tcpaddr)
 		if err != nil {
-			log.Printf("Listen tcp failed: %v\n", err)
+			zlog.Error("Listen tcp failed", zap.String("addr", tcpaddr), zap.Error(err))
 			return
 		}
 
 		for {
 			conn, err := listen.Accept()
 			if err != nil {
-				log.Printf("Accept failed: %v\n", err)
+				zlog.Error("Accept failed:", zap.String("addr", tcpaddr), zap.Error(err))
 				continue
 			}
 
@@ -59,17 +58,17 @@ func main() {
 		}
 	} else if UdpPort != 0 {
 		udpaddr := fmt.Sprintf("%s:%d", Ip, UdpPort)
-		log.Printf("Listen udp: %v\n", udpaddr)
+		zlog.Info("Listen udp", zap.String("addr", udpaddr))
 
 		addr, err := net.ResolveUDPAddr("udp", udpaddr)
 		if err != nil {
-			log.Printf("ResolveUDPAddr failed: %v\n", err)
+			zlog.Error("ResolveUDPAddr failed", zap.String("addr", udpaddr), zap.Error(err))
 			return
 		}
 
 		conn, err := net.ListenUDP("udp", addr)
 		if err != nil {
-			log.Printf("ListenUDP failed: %v\n", err)
+			zlog.Error("ListenUDP failed", zap.String("addr", udpaddr), zap.Error(err))
 			return
 		}
 		defer conn.Close()

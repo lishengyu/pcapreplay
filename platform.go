@@ -4,7 +4,6 @@ import (
 	"container/list"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"strings"
 	"sync"
@@ -46,10 +45,11 @@ func dealPreSrvTcpData(zlog *zap.Logger, conn net.Conn, f pcapNameMethod) (*Flow
 		return nil, fmt.Errorf("pcap name is nil")
 	}
 
+	zlog.Info("tcp回放开始", zap.String("uuid", uuid), zap.String("pcap", pcapName), zap.String("conn", conn.RemoteAddr().String()))
 	return LoadPcapPayloadFile(zlog, pcapName, uuid)
 }
 
-func dealPreSrvUdpData(zlog *zap.Logger, data []byte, f pcapNameMethod) (*FlowInfo, error) {
+func dealPreSrvUdpData(zlog *zap.Logger, data []byte, addr string, f pcapNameMethod) (*FlowInfo, error) {
 	info := string(data)
 
 	if !strings.HasPrefix(info, "uuid:") {
@@ -63,6 +63,7 @@ func dealPreSrvUdpData(zlog *zap.Logger, data []byte, f pcapNameMethod) (*FlowIn
 		return nil, fmt.Errorf("pcap name is nil")
 	}
 
+	zlog.Info("udp回放开始", zap.String("uuid", uuid), zap.String("pcap", pcapName), zap.String("conn", addr))
 	return LoadPcapPayloadFile(zlog, pcapName, uuid)
 }
 
@@ -102,10 +103,10 @@ func dealTcpSrvData(zlog *zap.Logger, conn net.Conn, l *list.List) error {
 
 		bufferLen += n
 		if bufferLen >= pay.expectlen {
-			zlog.Info(fmt.Sprintf("[recv: %d ==> assembe: %d ==> expect: %d]\n", n, bufferLen, pay.expectlen))
+			zlog.Info("tcp报文接收", zap.String("conn", conn.RemoteAddr().String()), zap.Int("recv", n), zap.Int("assembe", bufferLen), zap.Int("expect", pay.expectlen))
 			bufferLen = 0
 		} else {
-			zlog.Info(fmt.Sprintf("continue reading... [recv: %d ==> assembe: %d ==> expect: %d]\n", n, bufferLen, pay.expectlen))
+			zlog.Info("tcp报文接收", zap.String("conn", conn.RemoteAddr().String()), zap.Int("recv continue", n), zap.Int("assembe", bufferLen), zap.Int("expect", pay.expectlen))
 			continue
 		}
 
@@ -134,7 +135,8 @@ func dealTcpSrvData(zlog *zap.Logger, conn net.Conn, l *list.List) error {
 			if err != nil {
 				return err
 			}
-			zlog.Info(fmt.Sprintf("[%s:%03d] Send: [%d]\n", FlowDirDesc[pay.dir], pay.pktSeq, pay.len))
+			zlog.Info("tcp报文发送", zap.String("conn", conn.RemoteAddr().String()), zap.String("方向", FlowDirDesc[pay.dir]),
+				zap.Int("索引", pay.pktSeq), zap.Int("发送长度", pay.len))
 			l.Remove(front)
 			time.Sleep(PktDuration)
 		}
@@ -166,11 +168,11 @@ func dealUdpSrvData(zlog *zap.Logger, conn *net.UDPConn, flow *FlowInfo, udpAddr
 
 		len := flow.assembLen + n
 		if len >= pay.expectlen {
-			zlog.Info(fmt.Sprintf("[recv: %d ==> assembe: %d ==> expect: %d]\n", n, len, pay.expectlen))
+			zlog.Info("udp报文接收", zap.String("conn", udpAddr.String()), zap.Int("recv", n), zap.Int("assembe", len), zap.Int("expect", pay.expectlen))
 			flow.assembLen = 0
 		} else {
 			flow.assembLen += n
-			zlog.Info(fmt.Sprintf("continue reading... [recv: %d ==> assembe: %d ==> expect: %d]\n", n, len, pay.expectlen))
+			zlog.Info("udp报文接收", zap.String("conn", udpAddr.String()), zap.Int("recv continue", n), zap.Int("assembe", len), zap.Int("expect", pay.expectlen))
 			return nil
 		}
 
@@ -203,7 +205,8 @@ func dealUdpSrvData(zlog *zap.Logger, conn *net.UDPConn, flow *FlowInfo, udpAddr
 			if err != nil {
 				return err
 			}
-			zlog.Info(fmt.Sprintf("Send: [%d]\n", pay.len))
+			zlog.Info("udp报文发送", zap.String("conn", udpAddr.String()), zap.String("方向", FlowDirDesc[pay.dir]),
+				zap.Int("索引", pay.pktSeq), zap.Int("发送长度", pay.len))
 			l.Remove(front)
 			time.Sleep(PktDuration)
 		}
@@ -213,16 +216,16 @@ func dealUdpSrvData(zlog *zap.Logger, conn *net.UDPConn, flow *FlowInfo, udpAddr
 func ReplaySrvTcpPcap(zlog *zap.Logger, tcpConn net.Conn, f pcapNameMethod) error {
 	flow, err := dealPreSrvTcpData(zlog, tcpConn, f)
 	if err != nil {
-		zlog.Error(fmt.Sprintf("获取回放报文特征失败：%v\n", err))
+		zlog.Error("结束tcp回放", zap.Error(err))
 		return err
 	}
 
 	err = dealTcpSrvData(zlog, tcpConn, flow.list)
 	if err != nil {
-		zlog.Error(fmt.Sprintf("Flow[%s] Failed: %v\n", flow.tuple, err))
+		zlog.Error("结束tcp回放", zap.String("conn", tcpConn.RemoteAddr().String()), zap.Error(err))
 		return err
 	}
-	zlog.Info(fmt.Sprintf("Replay Flow[%s] Succ!\n", flow.tuple))
+	zlog.Error("结束tcp回放", zap.String("conn", tcpConn.RemoteAddr().String()))
 	return nil
 }
 
@@ -233,16 +236,16 @@ func printRunUdpConn(zlog *zap.Logger) {
 		return true
 	}
 	UdpConnMap.Range(f)
-	zlog.Info(fmt.Sprintf("遗留回放任务数量:[%d] 任务详情:%v\n", len(buff), buff))
+	zlog.Info("udp报文回放任务详情", zap.Int("任务数量", len(buff)), zap.Strings("任务详情", buff))
 }
 
 func ReplaySrvUdpPcap(zlog *zap.Logger, udpConn *net.UDPConn, udpAddr *net.UDPAddr, f pcapNameMethod) error {
-	defer zlog.Error("udp报文回放异常退出\n")
+	defer zlog.Error("udp报文回放异常退出")
 	data := make([]byte, RawSocketBuff)
 	for {
 		n, addr, err := udpConn.ReadFromUDP(data)
 		if err != nil {
-			zlog.Error(fmt.Sprintf("read udp[%v] data failed: %v", addr, err))
+			zlog.Error("ReadFromUDP失败", zap.String("addr", addr.String()), zap.Error(err))
 			continue
 		}
 		addrKey := fmt.Sprintf("%s:%d", addr.IP.String(), addr.Port)
@@ -251,50 +254,21 @@ func ReplaySrvUdpPcap(zlog *zap.Logger, udpConn *net.UDPConn, udpAddr *net.UDPAd
 			flow := value.(*FlowInfo)
 			err = dealUdpSrvData(zlog, udpConn, flow, addr, n)
 			if err == io.EOF {
-				zlog.Info(fmt.Sprintf("Replay Flow[%s] Succ: %s\n", flow.tuple, addrKey))
+				zlog.Error("结束udp回放", zap.String("tuple", flow.tuple), zap.String("conn", addrKey))
 				UdpConnMap.Delete(addrKey)
 				printRunUdpConn(zlog)
 			} else if err != nil {
-				zlog.Error(fmt.Sprintf("Replay Flow[%s] Failed: %s\n", flow.tuple, err))
+				zlog.Error("结束udp回放", zap.String("tuple", flow.tuple), zap.String("conn", addrKey), zap.Error(err))
 				UdpConnMap.Delete(addrKey)
 				printRunUdpConn(zlog)
 			}
 		} else { //未加表
-			flow, err := dealPreSrvUdpData(zlog, data[:n], f)
+			flow, err := dealPreSrvUdpData(zlog, data[:n], addrKey, f)
 			if err != nil {
-				zlog.Error(fmt.Sprintf("获取回放报文特征失败：%v\n", err))
+				zlog.Error("结束udp回放", zap.String("tuple", flow.tuple), zap.String("conn", addrKey), zap.Error(err))
 				continue
 			}
 			UdpConnMap.Store(addrKey, flow)
 		}
 	}
-}
-
-func NewPcapSrvTcpConn(addr string) (net.Conn, error) {
-	listen, err := net.Listen("tcp", addr)
-	if err != nil {
-		log.Printf("Listen tcp failed: %v\n", err)
-		return nil, err
-	}
-
-	conn, err := listen.Accept()
-	if err != nil {
-		return nil, err
-	}
-
-	return conn, nil
-}
-
-func NewPcapSrvUdpConn(addr string) (*net.UDPConn, *net.UDPAddr, error) {
-	udpAddr, err := net.ResolveUDPAddr("udp", addr)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	conn, err := net.ListenUDP("udp", udpAddr)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return conn, udpAddr, nil
 }
