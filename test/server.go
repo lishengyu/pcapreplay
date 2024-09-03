@@ -4,74 +4,70 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 
 	"github.com/lishengyu/pcapreplay"
 )
 
 var (
-	PcapFile string
-	Ip       string
-	UdpPort  string
-	TcpPort  string
+	Ip      string
+	UdpPort int
+	TcpPort int
+	Uuid    string
 )
 
+func getPcapName(uuid string) string {
+	return uuid
+}
+
 func main() {
-	flag.StringVar(&PcapFile, "f", "", "需要加载的数据报文")
-	flag.StringVar(&Ip, "i", "", "ip")
-	flag.StringVar(&TcpPort, "p", "", "tcp port")
-	flag.StringVar(&UdpPort, "u", "", "udp port")
+	flag.StringVar(&Ip, "i", "127.0.0.1", "ip")
+	flag.IntVar(&TcpPort, "p", 0, "tcp port")
+	flag.IntVar(&UdpPort, "u", 0, "udp port")
+	flag.StringVar(&Uuid, "uuid", "test", "uuid")
 	flag.Parse()
 
-	if PcapFile == "" {
+	if TcpPort == 0 && UdpPort == 0 {
 		flag.Usage()
 		return
 	}
 
-	if TcpPort != "" {
-		tcpaddr := fmt.Sprintf("%s:%s", Ip, TcpPort)
+	if TcpPort != 0 {
+		tcpaddr := fmt.Sprintf("%s:%d", Ip, TcpPort)
 		log.Printf("Listen tcp: %v\n", tcpaddr)
 
-		tcpConn, err := pcapreplay.NewPcapSrvTcpConn(tcpaddr)
+		listen, err := net.Listen("tcp", tcpaddr)
 		if err != nil {
-			log.Printf("Failed: %v\n", err)
+			log.Printf("Listen tcp failed: %v\n", err)
 			return
 		}
-		defer tcpConn.Close()
 
-		flows, err := pcapreplay.LoadPcapPayloadFile(PcapFile)
-		if err != nil {
-			log.Printf("Failed: Load Pcap File: %v\n", err)
-			return
-		}
-		log.Printf("Load Pcap[%s] Complete! Flows Num[%d]\n", PcapFile, pcapreplay.GetFlowNum(flows))
+		for {
+			conn, err := listen.Accept()
+			if err != nil {
+				log.Printf("Accept failed: %v\n", err)
+				continue
+			}
 
-		err = pcapreplay.ReplaySrvPcap(flows, tcpConn, nil, nil)
-		if err != nil {
-			log.Printf("Failed: Replay Pcap File: %v\n", err)
-			return
+			go pcapreplay.ReplaySrvTcpPcap(conn, getPcapName)
 		}
-	} else if UdpPort != "" {
-		udpaddr := fmt.Sprintf("%s:%s", Ip, UdpPort)
+	} else if UdpPort != 0 {
+		udpaddr := fmt.Sprintf("%s:%d", Ip, UdpPort)
 		log.Printf("Listen udp: %v\n", udpaddr)
-		udpConn, udpAddr, err := pcapreplay.NewPcapSrvUdpConn(udpaddr)
-		if err != nil {
-			log.Printf("Failed: %v\n", err)
-			return
-		}
-		defer udpConn.Close()
 
-		flows, err := pcapreplay.LoadPcapPayloadFile(PcapFile)
+		addr, err := net.ResolveUDPAddr("udp", udpaddr)
 		if err != nil {
-			log.Printf("Failed: Load Pcap File: %v\n", err)
+			log.Printf("ResolveUDPAddr failed: %v\n", err)
 			return
 		}
-		log.Printf("Load Pcap[%s] Complete! Flows Num[%d]\n", PcapFile, pcapreplay.GetFlowNum(flows))
 
-		err = pcapreplay.ReplaySrvPcap(flows, nil, udpConn, udpAddr)
+		conn, err := net.ListenUDP("udp", addr)
 		if err != nil {
-			log.Printf("Failed: Replay Pcap File: %v\n", err)
+			log.Printf("ListenUDP failed: %v\n", err)
 			return
 		}
+		defer conn.Close()
+		pcapreplay.ReplaySrvUdpPcap(conn, addr, getPcapName)
 	}
 
 	return

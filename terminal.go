@@ -1,7 +1,6 @@
 package pcapreplay
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -174,35 +173,23 @@ func dealUdpCliData(flow *FlowInfo, addr string) error {
 
 		time.Sleep(PktDuration)
 	}
-
-	return err
 }
 
-func ReplayCliPcap(flows *Flows, tcpAddr, udpAddr string) error {
-	err := errors.New("no flow info")
-	nums := len(flows.flow)
-	var cnt Stats
-	for index, flow := range flows.flow {
-		index++
-		if flow.proto == "TCP" {
-			err = dealTcpCliData(flow, tcpAddr)
-		} else if flow.proto == "UDP" {
-			err = dealUdpCliData(flow, udpAddr)
-		} else {
-			err = errors.New(fmt.Sprintf("Not Support Proto[%s]\n", flow.proto))
-		}
-
-		if err == nil {
-			cnt.cntSucc++
-			log.Printf("Replay[%d/%d] Flow[%s] Succ!\n", index, nums, flow.tuple)
-		} else {
-			cnt.cntFail++
-			log.Printf("Replay[%d/%d] Flow[%s] Fail! %v\n", index, nums, flow.tuple, err)
-		}
-
-		//time.Sleep(FlowDuration)
+func ReplayCliPcap(flow *FlowInfo, tcpAddr, udpAddr string) error {
+	var err error
+	if flow.proto == "TCP" {
+		err = dealTcpCliData(flow, tcpAddr)
+	} else if flow.proto == "UDP" {
+		err = dealUdpCliData(flow, udpAddr)
+	} else {
+		err = fmt.Errorf(fmt.Sprintf("Not Support Proto[%s]\n", flow.proto))
 	}
 
-	log.Printf("Sum:%d, succ:%d, fail:%d\n", nums, cnt.cntSucc, cnt.cntFail)
+	if err != nil {
+		log.Printf("Replay Flow[%s] Fail! %v\n", flow.tuple, err)
+		return err
+	}
+
+	log.Printf("Replay Flow[%s] Succ!\n", flow.tuple)
 	return nil
 }

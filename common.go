@@ -3,7 +3,6 @@ package pcapreplay
 import (
 	"container/list"
 	"crypto/md5"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -165,6 +164,15 @@ func upAssembInfo(flow *FlowInfo, len int) {
 	flow.assembLen += len
 }
 
+func updateAssembInfo(flow *FlowInfo, dir, len int) {
+	if flow.assembDir == dir {
+		flow.assembLen += len
+	} else {
+		flow.assembDir = dir
+		flow.assembLen = len
+	}
+}
+
 func updatePktCount(flow *FlowInfo, dir int) {
 	flow.pktDirSeq[dir] += 1
 }
@@ -265,22 +273,46 @@ func getPayloadInfo(packet gopacket.Packet) []byte {
 	return buff
 }
 
-func updateFlowPayload(flows *Flows, packet gopacket.Packet) {
-	/*
-		layers := packet.Layers()
-		for _, layer := range layers {
-			log.Printf("layers: [%d][%v]\n", layer.LayerType(), layer.LayerPayload())
-		}
-	*/
+func AddFlowExtraNode(flow *FlowInfo, dir int, payload []byte) {
+	pi := newStack(payload, dir, 0, flow.pktDirSeq)
+	flow.list.PushBack(pi)
+}
 
+func AddFlowNode(flow *FlowInfo, dir int, payload []byte) {
+	var expectLen int
+	if flow.assembDir != dir {
+		expectLen = flow.assembLen
+	} else {
+		expectLen = 0
+	}
+
+	pi := newStack(payload, dir, expectLen, flow.pktDirSeq)
+	flow.list.PushBack(pi)
+
+	//更细报文统计信息
+	updatePktCount(flow, dir)
+
+	//记录临时重组信息
+	updateAssembInfo(flow, dir, len(payload))
+}
+
+func AddFlowTailNode(flows *Flows) {
+	for _, flow := range flows.flow {
+		//添加最后的伪节点
+		tail := newTailStack(flow.assembLen, flow.assembDir)
+		flow.list.PushBack(tail)
+		//重置assemble
+		flow.assembDir = FlowDirNone
+		flow.assembLen = 0
+	}
+}
+
+func updateFlowPayload(flows *Flows, packet gopacket.Packet, firstPay []byte) {
 	L3 := getNetworkLayer(packet)
 	L4 := getTransportLayer(packet)
 	payload := getPayloadInfo(packet)
 
-	if L3 == nil || L4 == nil {
-		return
-	}
-	if len(payload) == 0 {
+	if L3 == nil || L4 == nil || len(payload) == 0 {
 		return
 	}
 
@@ -295,80 +327,44 @@ func updateFlowPayload(flows *Flows, packet gopacket.Packet) {
 	if ok {
 		flow := flows.flow[index]
 		curDir := getFlowDir(flow, dp)
-		if flow.assembDir != curDir { //上下行切换，入队列
-			//伪节点出队
-			flow.list.Remove(flow.list.Back())
-
-			//更细报文统计信息
-			updatePktCount(flow, curDir)
-
-			//只有状态切换的情况下，才需要保存预期的接收字节长度
-			//但是最后一个方向的状态，没有切换无法保存，需要追加一个节点
-			pi := newStack(payload, curDir, flow.assembLen, flow.pktDirSeq)
-			flow.list.PushBack(pi)
-
-			//更新重组信息
-			setAssembInfo(flow, curDir, len(payload))
-
-			//伪节点入队
-			tail := newTailStack(flow.assembLen, curDir)
-			flow.list.PushBack(tail)
-		} else {
-			//伪节点出队
-			flow.list.Remove(flow.list.Back())
-
-			//更细报文统计信息
-			updatePktCount(flow, curDir)
-
-			pi := newStack(payload, curDir, 0, flow.pktDirSeq)
-			flow.list.PushBack(pi)
-
-			//更新重组信息
-			upAssembInfo(flow, len(payload))
-
-			//伪节点入队
-			tail := newTailStack(flow.assembLen, curDir)
-			flow.list.PushBack(tail)
-		}
+		AddFlowNode(flow, curDir, payload)
 	} else {
 		flow := newFlow(key, proto, dp)
-
-		//更细报文统计信息
-		updatePktCount(flow, FlowDirUp)
-		pi := newStack(payload, FlowDirUp, 0, flow.pktDirSeq)
-		flow.list.PushBack(pi)
-
-		//记录临时重组信息
-		setAssembInfo(flow, FlowDirUp, len(payload))
-
-		//添加最后的伪节点
-		tail := newTailStack(flow.assembLen, FlowDirUp)
-		flow.list.PushBack(tail)
-
+		//----------------------------------
+		//终端信息节点
+		AddFlowExtraNode(flow, FlowDirUp, firstPay)
+		//----------------------------------
+		//报文内容节点
+		AddFlowNode(flow, FlowDirUp, payload)
 		//追加流
 		appendFlows(flows, flow, key)
 	}
 }
 
-func LoadPcapPayloadFile(path string) (*Flows, error) {
-	flows := NewFlows()
-
+func LoadPcapPayloadFile(path string, uuid string) (*FlowInfo, error) {
 	if exist := pathExists(path); !exist {
-		return flows, errors.New(fmt.Sprintf("File [%s] Not exist!\n", path))
+		return nil, fmt.Errorf(fmt.Sprintf("File [%s] Not exist!\n", path))
 	}
 
 	handle, err := pcap.OpenOffline(path)
 	if err != nil {
-		return flows, err
+		return nil, err
 	}
 	defer handle.Close()
 
+	flows := NewFlows()
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	for packet := range packetSource.Packets() {
-		updateFlowPayload(flows, packet)
+		updateFlowPayload(flows, packet, []byte(uuid))
 	}
 
-	//flows := buildFlowsRelation(flowsData)
+	AddFlowTailNode(flows)
 	printFlowsInfo(flows)
-	return flows, nil
+
+	if len(flows.flow) == 0 {
+		return nil, fmt.Errorf("新建流条目数为0")
+	}
+
+	log.Printf("只取第一条流进行回放\n")
+	return flows.flow[0], nil
 }
