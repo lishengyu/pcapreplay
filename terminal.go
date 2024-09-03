@@ -2,9 +2,10 @@ package pcapreplay
 
 import (
 	"fmt"
-	"log"
 	"net"
 	"time"
+
+	"github.com/lishengyu/slog"
 )
 
 func dealTcpCliData(flow *FlowInfo, addr string) error {
@@ -14,7 +15,7 @@ func dealTcpCliData(flow *FlowInfo, addr string) error {
 	}
 	defer func() {
 		if err = conn.Close(); err != nil {
-			log.Printf("conn Close failed: %v\n", err)
+			slog.Warn(fmt.Sprintf("conn Close failed: %v\n", err))
 		}
 	}()
 
@@ -44,7 +45,7 @@ func dealTcpCliData(flow *FlowInfo, addr string) error {
 		if err != nil {
 			return err
 		}
-		log.Printf("[%s:%03d] Send: [%d]\n", FlowDirDesc[pay.dir], pay.pktSeq, pay.len)
+		slog.Info(fmt.Sprintf("[%s:%03d] Send: [%d]\n", FlowDirDesc[pay.dir], pay.pktSeq, pay.len))
 		l.Remove(front)
 
 		var bufferLen int
@@ -82,11 +83,11 @@ func dealTcpCliData(flow *FlowInfo, addr string) error {
 
 			bufferLen += n
 			if bufferLen >= pay.expectlen {
-				log.Printf("[recv: %d ==> assembe: %d ==> expect: %d]\n", n, bufferLen, pay.expectlen)
+				slog.Info(fmt.Sprintf("[recv: %d ==> assembe: %d ==> expect: %d]\n", n, bufferLen, pay.expectlen))
 				bufferLen = 0
 				break
 			} else {
-				log.Printf("continue reading... [recv: %d ==> assembe: %d ==> expect: %d]\n", n, bufferLen, pay.expectlen)
+				slog.Info(fmt.Sprintf("continue reading... [recv: %d ==> assembe: %d ==> expect: %d]\n", n, bufferLen, pay.expectlen))
 				continue
 			}
 		}
@@ -107,7 +108,7 @@ func dealUdpCliData(flow *FlowInfo, addr string) error {
 	}
 	defer func() {
 		if err = conn.Close(); err != nil {
-			log.Printf("conn Close failed: %v\n", err)
+			slog.Warn(fmt.Sprintf("conn Close failed: %v\n", err))
 		}
 	}()
 
@@ -132,7 +133,7 @@ func dealUdpCliData(flow *FlowInfo, addr string) error {
 		if err != nil {
 			return err
 		}
-		log.Printf("Send: [%d]\n", pay.len)
+		slog.Info(fmt.Sprintf("Send: [%d]\n", pay.len))
 		l.Remove(front)
 
 		for {
@@ -158,15 +159,15 @@ func dealUdpCliData(flow *FlowInfo, addr string) error {
 			data := make([]byte, RawSocketBuff)
 			n, addr, err := conn.ReadFromUDP(data)
 			if err != nil {
-				log.Printf("read udp[%v] data failed: %v", addr, err)
+				slog.Warn(fmt.Sprintf("read udp[%v] data failed: %v", addr, err))
 				return err
 			}
 
 			if n != pay.len {
-				log.Printf("length recv[%d], expect[%d], continue...\n", n, pay.len)
+				slog.Warn(fmt.Sprintf("length recv[%d], expect[%d], continue...\n", n, pay.len))
 				continue
 			} else {
-				log.Printf("Recv: [%d]\n", pay.len)
+				slog.Info(fmt.Sprintf("Recv: [%d]\n", pay.len))
 				l.Remove(front)
 			}
 		}
@@ -186,10 +187,10 @@ func ReplayCliPcap(flow *FlowInfo, tcpAddr, udpAddr string) error {
 	}
 
 	if err != nil {
-		log.Printf("Replay Flow[%s] Fail! %v\n", flow.tuple, err)
+		slog.Warn(fmt.Sprintf("Replay Flow[%s] Fail! %v\n", flow.tuple, err))
 		return err
 	}
 
-	log.Printf("Replay Flow[%s] Succ!\n", flow.tuple)
+	slog.Info(fmt.Sprintf("Replay Flow[%s] Succ!\n", flow.tuple))
 	return nil
 }

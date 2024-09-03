@@ -3,11 +3,13 @@ package pcapreplay
 import (
 	"container/list"
 	"fmt"
-	"log"
+	"io"
 	"net"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/lishengyu/slog"
 )
 
 // var UdpConnMap map[*UdpAddr]*FlowInfo
@@ -99,10 +101,10 @@ func dealTcpSrvData(conn net.Conn, l *list.List) error {
 
 		bufferLen += n
 		if bufferLen >= pay.expectlen {
-			log.Printf("[recv: %d ==> assembe: %d ==> expect: %d]\n", n, bufferLen, pay.expectlen)
+			slog.Info(fmt.Sprintf("[recv: %d ==> assembe: %d ==> expect: %d]\n", n, bufferLen, pay.expectlen))
 			bufferLen = 0
 		} else {
-			log.Printf("continue reading... [recv: %d ==> assembe: %d ==> expect: %d]\n", n, bufferLen, pay.expectlen)
+			slog.Info(fmt.Sprintf("continue reading... [recv: %d ==> assembe: %d ==> expect: %d]\n", n, bufferLen, pay.expectlen))
 			continue
 		}
 
@@ -131,7 +133,7 @@ func dealTcpSrvData(conn net.Conn, l *list.List) error {
 			if err != nil {
 				return err
 			}
-			log.Printf("[%s:%03d] Send: [%d]\n", FlowDirDesc[pay.dir], pay.pktSeq, pay.len)
+			slog.Info(fmt.Sprintf("[%s:%03d] Send: [%d]\n", FlowDirDesc[pay.dir], pay.pktSeq, pay.len))
 			l.Remove(front)
 			time.Sleep(PktDuration)
 		}
@@ -147,14 +149,12 @@ func dealUdpSrvData(conn *net.UDPConn, flow *FlowInfo, udpAddr *net.UDPAddr, n i
 	l := flow.list
 	for {
 		if l.Len() == 0 {
-			//to end
-			return nil
+			return io.EOF
 		}
 
 		front := l.Front()
 		if front == nil {
-			//to end
-			return nil
+			return io.EOF
 		}
 
 		pay := front.Value.(Stack)
@@ -165,42 +165,44 @@ func dealUdpSrvData(conn *net.UDPConn, flow *FlowInfo, udpAddr *net.UDPAddr, n i
 
 		len := flow.assembLen + n
 		if len >= pay.expectlen {
-			log.Printf("[recv: %d ==> assembe: %d ==> expect: %d]\n", n, len, pay.expectlen)
+			slog.Info(fmt.Sprintf("[recv: %d ==> assembe: %d ==> expect: %d]\n", n, len, pay.expectlen))
 			flow.assembLen = 0
 		} else {
 			flow.assembLen += n
-			log.Printf("continue reading... [recv: %d ==> assembe: %d ==> expect: %d]\n", n, len, pay.expectlen)
+			slog.Info(fmt.Sprintf("continue reading... [recv: %d ==> assembe: %d ==> expect: %d]\n", n, len, pay.expectlen))
 			return nil
 		}
 
 		//读完结束
 		if pay.fake {
-			//to end
-			return nil
+			return io.EOF
 		}
 
 		for {
 			if l.Len() == 0 {
-				//to end
-				return nil
+				return io.EOF
 			}
 
 			front := l.Front()
 			if front == nil {
-				//to end
-				return nil
+				return io.EOF
 			}
 
 			pay := front.Value.(Stack)
 			if pay.dir == FlowDirUp {
-				return nil
+				if pay.fake {
+					return io.EOF
+				} else {
+					//写结束，需要等待接受
+					return nil
+				}
 			}
 
 			_, err = conn.WriteToUDP(pay.payload, udpAddr)
 			if err != nil {
 				return err
 			}
-			log.Printf("Send: [%d]\n", pay.len)
+			slog.Info(fmt.Sprintf("Send: [%d]\n", pay.len))
 			l.Remove(front)
 			time.Sleep(PktDuration)
 		}
@@ -210,46 +212,59 @@ func dealUdpSrvData(conn *net.UDPConn, flow *FlowInfo, udpAddr *net.UDPAddr, n i
 func ReplaySrvTcpPcap(tcpConn net.Conn, f pcapNameMethod) error {
 	flow, err := dealPreSrvTcpData(tcpConn, f)
 	if err != nil {
-		log.Printf("获取回放报文特征失败：%v\n", err)
+		slog.Warn(fmt.Sprintf("获取回放报文特征失败：%v\n", err))
 		return err
 	}
 
 	err = dealTcpSrvData(tcpConn, flow.list)
 	if err != nil {
-		log.Printf("Flow[%s] Failed: %v\n", flow.tuple, err)
+		slog.Warn(fmt.Sprintf("Flow[%s] Failed: %v\n", flow.tuple, err))
 		return err
 	}
-	log.Printf("Replay Flow[%s] Succ!\n", flow.tuple)
+	slog.Info(fmt.Sprintf("Replay Flow[%s] Succ!\n", flow.tuple))
 	return nil
 }
 
+func printRunUdpConn() {
+	var buff []string
+	f := func(key, value interface{}) bool {
+		buff = append(buff, key.(string))
+		return true
+	}
+	UdpConnMap.Range(f)
+	slog.Info(fmt.Sprintf("遗留回放任务数量:[%d] 任务详情:%v\n", len(buff), buff))
+}
+
 func ReplaySrvUdpPcap(udpConn *net.UDPConn, udpAddr *net.UDPAddr, f pcapNameMethod) error {
-	defer log.Printf("udp报文回放异常退出\n")
+	defer slog.Err("udp报文回放异常退出\n")
 	data := make([]byte, RawSocketBuff)
 	for {
 		n, addr, err := udpConn.ReadFromUDP(data)
 		if err != nil {
-			log.Printf("read udp[%v] data failed: %v", addr, err)
+			slog.Warn(fmt.Sprintf("read udp[%v] data failed: %v", addr, err))
 			continue
 		}
-		log.Printf("test addr: %v [%d][%s]\n", addr, n, string(data[:n]))
-		value, ok := UdpConnMap.Load(addr)
+		addrKey := fmt.Sprintf("%s:%d", addr.IP.String(), addr.Port)
+		value, ok := UdpConnMap.Load(addrKey)
 		if ok { //已加表
-			log.Printf("test11111\n")
 			flow := value.(*FlowInfo)
-			err = dealUdpSrvData(udpConn, flow, udpAddr, n)
-			if err != nil {
-				log.Printf("Replay Flow[%s] Failed: %v\n", flow.tuple, err)
-				continue
+			err = dealUdpSrvData(udpConn, flow, addr, n)
+			if err == io.EOF {
+				slog.Info(fmt.Sprintf("Replay Flow[%s] Succ: %s\n", flow.tuple, addrKey))
+				UdpConnMap.Delete(addrKey)
+				printRunUdpConn()
+			} else if err != nil {
+				slog.Warn(fmt.Sprintf("Replay Flow[%s] Failed: %v\n", flow.tuple, err))
+				UdpConnMap.Delete(addrKey)
+				printRunUdpConn()
 			}
 		} else { //未加表
-			log.Printf("test22222\n%s\n", string(data[:n]))
 			flow, err := dealPreSrvUdpData(data[:n], f)
 			if err != nil {
-				log.Printf("获取回放报文特征失败：%v\n", err)
+				slog.Warn(fmt.Sprintf("获取回放报文特征失败：%v\n", err))
 				continue
 			}
-			UdpConnMap.Store(addr, flow)
+			UdpConnMap.Store(addrKey, flow)
 		}
 	}
 }
@@ -257,7 +272,7 @@ func ReplaySrvUdpPcap(udpConn *net.UDPConn, udpAddr *net.UDPAddr, f pcapNameMeth
 func NewPcapSrvTcpConn(addr string) (net.Conn, error) {
 	listen, err := net.Listen("tcp", addr)
 	if err != nil {
-		log.Printf("Listen tcp failed: %v\n", err)
+		slog.Warn(fmt.Sprintf("Listen tcp failed: %v\n", err))
 		return nil, err
 	}
 

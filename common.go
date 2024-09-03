@@ -5,7 +5,6 @@ import (
 	"crypto/md5"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"sort"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
+	"github.com/lishengyu/slog"
 )
 
 type Stack struct {
@@ -83,13 +83,13 @@ func pathExists(path string) bool {
 func NicList() error {
 	devices, err := pcap.FindAllDevs()
 	if err != nil {
-		log.Printf("Nic Get Failed: %v\n", err)
+		slog.Err(fmt.Sprintf("Nic Get Failed: %v\n", err))
 		return err
 	}
 
 	for i, device := range devices {
-		log.Printf("网卡[%d]\n\t%s\n\t%s\n\t%d\n\t%v\n",
-			i+1, device.Name, device.Description, device.Flags, device.Addresses)
+		slog.Info(fmt.Sprintf("网卡[%d]\n\t%s\n\t%s\n\t%d\n\t%v\n",
+			i+1, device.Name, device.Description, device.Flags, device.Addresses))
 	}
 
 	return nil
@@ -223,14 +223,14 @@ func GetFlowNum(flows *Flows) int {
 
 func printFlowsInfo(flows *Flows) {
 	for index, flow := range flows.flow {
-		log.Printf("流信息:\n")
-		log.Printf("流[%d]：%s, 协议：%s, 负载包数量：%d\n", index, flow.tuple, flow.proto, flow.list.Len())
+		slog.Info("流信息:\n")
+		slog.Info(fmt.Sprintf("流[%d]：%s, 协议：%s, 负载包数量：%d\n", index, flow.tuple, flow.proto, flow.list.Len()))
 		var index int
 		for e := flow.list.Front(); e != nil; e = e.Next() {
 			value := e.Value.(Stack)
 			index++
-			log.Printf("第%03d个包：[%s-%03d/%03d]：[发送长度:%d-接收长度:%d]\n",
-				index, FlowDirDesc[value.dir], value.pktSeq, flow.pktDirSeq[value.dir], value.len, value.expectlen)
+			slog.Info(fmt.Sprintf("第%03d个包：[%s-%03d/%03d]：[发送长度:%d-接收长度:%d]\n",
+				index, FlowDirDesc[value.dir], value.pktSeq, flow.pktDirSeq[value.dir], value.len, value.expectlen))
 		}
 	}
 }
@@ -365,6 +365,6 @@ func LoadPcapPayloadFile(path string, uuid string) (*FlowInfo, error) {
 		return nil, fmt.Errorf("新建流条目数为0")
 	}
 
-	log.Printf("只取第一条流进行回放\n")
+	slog.Info("只取第一条流进行回放\n")
 	return flows.flow[0], nil
 }
