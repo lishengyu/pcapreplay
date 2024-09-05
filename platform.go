@@ -17,36 +17,43 @@ var UdpConnMap sync.Map
 
 type pcapNameMethod func(string) string
 
-func dealPreSrvTcpData(zlog *zap.Logger, conn net.Conn, f pcapNameMethod) (*FlowInfo, error) {
+func dealPreSrvTcpData(zlog *zap.Logger, conn net.Conn, f pcapNameMethod) (int, *FlowInfo, error) {
 	if conn == nil {
-		return nil, fmt.Errorf("conn is nil")
+		return 0, nil, fmt.Errorf("conn is nil")
 	}
 
 	err := conn.SetReadDeadline(time.Now().Add(ReadDeadline))
 	if err != nil {
-		return nil, err
+		return 0, nil, err
 	}
 
 	data := make([]byte, RawSocketBuff)
 	n, err := conn.Read(data)
 	if err != nil {
-		return nil, err
+		return 0, nil, err
 	}
 
 	info := string(data[:n])
 	if !strings.HasPrefix(info, "uuid:") {
-		return nil, fmt.Errorf("the first payload is not start with uuid")
+		return 0, nil, fmt.Errorf("the first payload is not start with uuid")
 	}
 
-	fs := strings.Split(info, "\r\n")
+	fs := strings.SplitN(info, "\r\n", 2)
+	if len(fs) != 2 {
+		return 0, nil, fmt.Errorf("uuid not end with '\r\n'")
+	}
+
 	uuid := strings.TrimPrefix(fs[0], "uuid:")
 	pcapName := f(uuid)
 	if pcapName == "" {
-		return nil, fmt.Errorf("pcap name is nil")
+		return 0, nil, fmt.Errorf("pcap name is nil")
 	}
 
-	zlog.Info("tcp回放开始", zap.String("uuid", uuid), zap.String("pcap", pcapName), zap.String("conn", conn.RemoteAddr().String()))
-	return LoadPcapPayloadFile(zlog, pcapName, uuid)
+	preSize := len(fs[1])
+	zlog.Info("tcp回放开始", zap.String("uuid", uuid), zap.String("pcap", pcapName), zap.String("conn", conn.RemoteAddr().String()), zap.Int("preSize", preSize))
+
+	flow, err1 := LoadPcapPayloadFile(zlog, pcapName, uuid)
+	return preSize, flow, err1
 }
 
 func dealPreSrvUdpData(zlog *zap.Logger, data []byte, addr string, f pcapNameMethod) (*FlowInfo, error) {
@@ -67,13 +74,16 @@ func dealPreSrvUdpData(zlog *zap.Logger, data []byte, addr string, f pcapNameMet
 	return LoadPcapPayloadFile(zlog, pcapName, uuid)
 }
 
-func dealTcpSrvData(zlog *zap.Logger, conn net.Conn, l *list.List) error {
+func dealTcpSrvData(zlog *zap.Logger, conn net.Conn, l *list.List, prelen int) error {
 	if conn == nil {
 		return nil
 	}
 
 	var err error
 	var bufferLen int
+
+	//前面粘包，导致有部分字节内容已经收取过了
+	bufferLen = prelen
 
 	for {
 		if l.Len() == 0 {
@@ -90,23 +100,24 @@ func dealTcpSrvData(zlog *zap.Logger, conn net.Conn, l *list.List) error {
 			continue
 		}
 
-		err = conn.SetReadDeadline(time.Now().Add(ReadDeadline))
-		if err != nil {
-			return err
-		}
-
-		data := make([]byte, RawSocketBuff)
-		n, err := conn.Read(data)
-		if err != nil {
-			return err
-		}
-
-		bufferLen += n
+		//处理前面粘包，已经收全的场景
 		if bufferLen >= pay.expectlen {
-			zlog.Info("tcp报文接收", zap.String("conn", conn.RemoteAddr().String()), zap.Int("recv", n), zap.Int("assembe", bufferLen), zap.Int("expect", pay.expectlen))
+			zlog.Info("tcp报文接收", zap.String("conn", conn.RemoteAddr().String()), zap.Int("pre_recv", bufferLen), zap.Int("expect", pay.expectlen))
 			bufferLen = 0
 		} else {
-			zlog.Info("tcp报文接收", zap.String("conn", conn.RemoteAddr().String()), zap.Int("recv continue", n), zap.Int("assembe", bufferLen), zap.Int("expect", pay.expectlen))
+			zlog.Info("tcp报文接收", zap.String("conn", conn.RemoteAddr().String()), zap.Int("pre_recv continue", bufferLen), zap.Int("expect", pay.expectlen))
+			err = conn.SetReadDeadline(time.Now().Add(ReadDeadline))
+			if err != nil {
+				return err
+			}
+
+			data := make([]byte, RawSocketBuff)
+			n, err := conn.Read(data)
+			if err != nil {
+				return err
+			}
+
+			bufferLen += n
 			continue
 		}
 
@@ -214,13 +225,13 @@ func dealUdpSrvData(zlog *zap.Logger, conn *net.UDPConn, flow *FlowInfo, udpAddr
 }
 
 func ReplaySrvTcpPcap(zlog *zap.Logger, tcpConn net.Conn, f pcapNameMethod) error {
-	flow, err := dealPreSrvTcpData(zlog, tcpConn, f)
+	preSize, flow, err := dealPreSrvTcpData(zlog, tcpConn, f)
 	if err != nil {
 		zlog.Error("结束tcp回放", zap.Error(err))
 		return err
 	}
 
-	err = dealTcpSrvData(zlog, tcpConn, flow.list)
+	err = dealTcpSrvData(zlog, tcpConn, flow.list, preSize)
 	if err != nil {
 		zlog.Error("结束tcp回放", zap.String("conn", tcpConn.RemoteAddr().String()), zap.Error(err))
 		return err
